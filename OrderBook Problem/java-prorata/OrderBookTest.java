@@ -387,7 +387,7 @@ public class OrderBookTest {
             ob.submitOrder(makeOrder(1, 100, 10, Side.ASK));
             ob.submitOrder(makeOrder(2, 100, 10, Side.ASK));
             List<Trade> trades = ob.submitOrder(makeOrder(3, 100, 10, Side.BUY));
-
+            
             List<Trade> expectedTrades = List.of(
                     makeTrade(1, 3, 100, 5),
                     makeTrade(2, 3, 100, 5));

@@ -79,14 +79,4 @@ public class OrderBook {
         return new ArrayList<Trade>();
     }
 
-    public ArrayList<Trade> matchBuyOrder(Order incoming) {
-        //TODO: implement logic
-        return new ArrayList<Trade>();
-    }
-
-    public ArrayList<Trade> matchAskOrder(Order incoming) {
-        //TODO: implement logic
-        return new ArrayList<Trade>();
-    }
-
 }
