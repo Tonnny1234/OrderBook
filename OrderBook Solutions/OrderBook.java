@@ -1,35 +1,45 @@
-/*
-This is one of the pro-rata Java solutions.
-There are many more different variants that will pass all 40 test cases
-*/
-
 import java.util.*;
 
 
+class PriceLevel {
+    HashSet<Order> orderCollection;
+    Integer totalVolume;
 
+    PriceLevel () {
+        this.totalVolume = 0;
+        orderCollection = new HashSet<>();
+    }
+}
+
+// Comparator used for remainder allocation: volume desc, then timestamp asc
+class OrderComparators {
+    public static final Comparator<Order> RemainderAlloc = (o1, o2) -> {
+        if (o1.volume > o2.volume) return -1;
+        if (o1.volume < o2.volume) return 1;
+        return Long.compare(o1.timestamp, o2.timestamp);
+    };
+}
 
 // TODO: if you need any supporting classes please add them here 
 
-class PriceLevel {
-    int totalVolume;
-    LinkedList<Order> OrderList;
-}
-
 public class OrderBook {
     // TODO: add member variables here
-    HashMap<Integer, PriceLevel> bidBook = new HashMap<>();
-    HashMap<Integer, PriceLevel> askBook = new HashMap<>();
-
-    PriorityQueue<Integer> bidPrices = new PriorityQueue<>(Collections.reverseOrder());
-    PriorityQueue<Integer> askPrices = new PriorityQueue<>();
-
-
 
     /*
     These are the list of functions that you need to support and what the test
     suite will test you on.
     */
+    
+    HashMap<Integer, PriceLevel> bidBook = new HashMap<>();
+    PriorityQueue<Integer> bidPrices = new PriorityQueue<>(Collections.reverseOrder());
 
+    HashMap<Integer, PriceLevel> askBook = new HashMap<>();
+    PriorityQueue<Integer> askPrices = new PriorityQueue<>();
+
+    // map username -> Order for quick cancellation/lookup. usernames are "u<ID>" in tests
+    HashMap<String, Order> allOrdersOnBook = new HashMap<>();
+
+    Integer time = 0;
 
 
     /*
@@ -41,51 +51,39 @@ public class OrderBook {
     */
     public ArrayList<Order> getAllOrdersAtPrice(Integer price) {
         // TODO: implement logic
-        
         ArrayList<Order> allOrders = new ArrayList<>();
 
-        if ( (bidBook.get(price) == null) && (askBook.get(price) == null) ) {
-            return allOrders;
-
-        } else if ( bidBook.get(price) != null ) {
-            
+        if ( bidBook.get(price) != null ) {
             PriceLevel p = bidBook.get(price);
-            for ( Order o : p.OrderList ) {
-                allOrders.add(o);
+            for ( Order entry : p.orderCollection ) {
+                allOrders.add(entry);
             }
-            return allOrders;
-
-        } else if ( askBook.get(price) != null ) {
-            
-            PriceLevel p = askBook.get(price);
-            for ( Order o : p.OrderList ) {
-                allOrders.add(o);
-            }
-            return allOrders;
         }
 
+        if ( askBook.get(price) != null ) {
+            PriceLevel p = askBook.get(price);
+            for ( Order entry : p.orderCollection ) {
+                allOrders.add(entry);
+            }
+        }
+        
         return allOrders;
     }
 
     public ArrayList<Order> getAllOrders() {
         // TODO: implement logic
-        
-        ArrayList<Order> allOrders = new ArrayList<>();
+        ArrayList<Order> allOrders = new ArrayList<Order>();
 
-        for ( PriceLevel p : bidBook.values() ) {
-
-            for ( Order o : p.OrderList ) {
-                allOrders.add(o);
+        for ( PriceLevel level : bidBook.values() ) {
+            for ( Order e : level.orderCollection ) {
+                allOrders.add(e);
             }
-
         }
 
-        for ( PriceLevel p : askBook.values() ) {
-
-            for ( Order o : p.OrderList ) {
-                allOrders.add(o);
+        for ( PriceLevel level : askBook.values() ) {
+            for ( Order e : level.orderCollection ) {
+                allOrders.add(e);
             }
-
         }
 
         return allOrders;
@@ -98,30 +96,32 @@ public class OrderBook {
     */
     public int getTotalVolumeAtPrice(Integer price) {
         // TODO: implement logic
-        
-        if ( (bidBook.get(price) == null) && (askBook.get(price) == null) ) {
-            return 0;
-        } else if ( bidBook.get(price) != null ) {
-            return bidBook.get(price).totalVolume;
-        } else if ( askBook.get(price) != null ) {
-            return askBook.get(price).totalVolume;
+        if ( bidBook.get(price) != null ) {
+            PriceLevel p = bidBook.get(price);
+            return p.totalVolume;
         }
+
+        if ( askBook.get(price) != null ) {
+            PriceLevel p = askBook.get(price);
+            return p.totalVolume;
+        }
+        
         return 0;
     }
 
     public int getTotalVolume() {
         // TODO: implement logic
-        int totalVolume = 0;
+        int total = 0;
 
-        for ( PriceLevel p : bidBook.values() ) {
-            totalVolume += p.totalVolume;
+        for ( PriceLevel level : bidBook.values() ) {
+            total += level.totalVolume;
         }
 
-        for ( PriceLevel p : askBook.values() ) {
-            totalVolume += p.totalVolume;
+        for ( PriceLevel level : askBook.values() ) {
+            total += level.totalVolume;
         }
 
-        return totalVolume;
+        return total;
     }
 
     /*
@@ -130,27 +130,51 @@ public class OrderBook {
     */
     public int getBestBid() {
         // TODO: implement logic
-        if ( bidPrices.isEmpty() ) {
-            return -1;
+        while ( !bidPrices.isEmpty() ) {
+            Integer price = bidPrices.peek();
+            if ( bidBook.get(price) != null ) {
+                return price;
+            }
+            bidPrices.remove();
         }
-        return bidPrices.peek();
+        return -1;
     }
 
     public int getBestAsk() {
         // TODO: implement logic
-        if ( askPrices.isEmpty() ) {
-            return -1;
+        while ( !askPrices.isEmpty() ) {
+            Integer price = askPrices.peek();
+            if ( askBook.get(price) != null ) {
+                return price;
+            }
+            askPrices.remove();
         }
-        return askPrices.peek();
+        return -1;
     }
 
     /*
     This will cancel an order on the OrderBook. If the orderId does not exist,
     return false, otherwise return true
     */
-    public boolean cancelOrder(long orderId) {
-        // TODO: implement logic
-        return false;
+    public boolean cancelOrder(Integer orderId) {
+        String uname = "u" + orderId;
+        Order entry = allOrdersOnBook.get(uname);
+        if ( entry == null ) {
+            return false;
+        }
+
+        HashMap<Integer, PriceLevel> book = (entry.side == Side.BUY) ? bidBook : askBook;
+        PriceLevel p = book.get(entry.price);
+        p.totalVolume -= entry.volume;
+        p.orderCollection.remove(entry);
+
+        if ( p.totalVolume == 0 ) {
+            book.remove(entry.price);
+        }
+
+        allOrdersOnBook.remove(uname);
+
+        return true;
     }
 
     /*
@@ -160,231 +184,201 @@ public class OrderBook {
     public ArrayList<Trade> submitOrder(Order incoming) {
         // TODO: implement logic
         
-        if ( incoming.side == Side.BUY ) {
+        if (incoming.side == Side.BUY) {
             return matchBuyOrder(incoming);
-        } else if ( incoming.side == Side.ASK ) {
-            return matchAskOrder(incoming);
+        } else {
+            return matchSellOrder(incoming);
         }
-
-        return new ArrayList<Trade>();
     }
 
-    public ArrayList<Trade> matchBuyOrder(Order incoming) {
-        ArrayList<Trade> tradeReceipts = new ArrayList<>();
+    private ArrayList<Trade> matchBuyOrder(Order incoming) {
+        ArrayList<Trade> tradeReciepts = new ArrayList<>();
 
-        // 1. order crosses
-        // 2. order does not cross
-
-        while ( !askBook.isEmpty() && (incoming.shares > 0) && (incoming.price >= getBestAsk()) )  {
-
-        // 1. Order.shares >= totVolume
-        // 2. Order.shares < totVolume
-
-
-        // Case 1:
-        // create receipts
-        // decrease shares of incoming order
-        // remove price level (prices & book)
-        // try again
-
-        // Case 2:
-        // calculate the pro rata for matchingOrders (1)
-        // give out remainder if any  (2)
-        // apply fill (2)
-        // calculate receipts (2)
-        // decrease totalVolume (2)
-        // remove any orders if needed (3)
-        // decrease inc.qty (goes to 0)
+        while ( !askBook.isEmpty() && incoming.price >= getBestAsk() && incoming.volume > 0 ) {
 
             PriceLevel oppLevel = askBook.get(getBestAsk());
 
-            if ( incoming.shares >= oppLevel.totalVolume ) {
-
-                for ( Order resting : oppLevel.OrderList ) {
-                    Trade t = new Trade(resting.orderId, incoming.orderId, resting.price, resting.shares);
-                    tradeReceipts.add(t);
+            if ( incoming.volume >= oppLevel.totalVolume ) {
+                //create receipts
+                for ( Order o : oppLevel.orderCollection ) {
+                    Trade t = new Trade(o.username, incoming.username, o.price, o.volume);
+                    tradeReciepts.add(t);
                 }
 
-                incoming.shares -= oppLevel.totalVolume;
+                //dec inc shares
+                incoming.volume -= oppLevel.totalVolume;
 
+                //remove price and collection of orders 
                 askBook.remove(getBestAsk());
                 askPrices.remove();
-
             } else {
 
                 HashMap<Order, Integer> fillQty = new HashMap<>();
+                PriorityQueue<Order> remainderQueue = new PriorityQueue<>(OrderComparators.RemainderAlloc.reversed());
                 int allocated = 0;
 
-                //calculate mathcing qty
-                for ( Order resting : oppLevel.OrderList ) {
-                    int restingAlloc = (incoming.shares * resting.shares)/oppLevel.totalVolume;
-                    allocated += restingAlloc;
-                    fillQty.put(resting, restingAlloc);
+                //calc pro rata
+                for ( Order e : oppLevel.orderCollection ) {
+                    int orderAlloc = (e.volume * incoming.volume)/oppLevel.totalVolume;
+                    fillQty.put(e, orderAlloc);
+                    allocated += orderAlloc;
                 }
 
-                int remainder = incoming.shares - allocated;
-                
-                //give out remainder --> (apply fill, calc receipts, dec totVol)
-                for ( Order resting : oppLevel.OrderList ) {
+                //find orders eligible for remainder if it exists
+                int remainder = incoming.volume - allocated;
+                if ( remainder > 0 ) {
+                    for ( Order e : oppLevel.orderCollection ) {
+                        remainderQueue.add(e);
 
-                    int currQty = fillQty.get(resting);
-
-                    if ( remainder > 0 ) {
-                        remainder--;
-                        currQty += 1;
-                    }
-
-                    if ( currQty > 0 ) {
-                        resting.shares -= currQty;
-                        Trade t  = new Trade(resting.orderId, incoming.orderId, resting.price, currQty);
-                        tradeReceipts.add(t);
-                        oppLevel.totalVolume -= currQty;
-                    }
-
-                }
-
-                //remove any orders with shares = 0
-                Iterator<Order> it = oppLevel.OrderList.iterator();
-                while ( it.hasNext() ) {
-                    Order o = it.next();
-
-                    if ( o.shares == 0 ) {
-                        it.remove();
+                        if ( remainderQueue.size() > remainder ) {
+                            remainderQueue.remove();
+                        }
                     }
                 }
-                incoming.shares = 0;
+
+                //go thru the remainders and update fill qty
+                while ( !remainderQueue.isEmpty() ) {
+                    Order entry = remainderQueue.poll();
+                    
+                    Integer currQty = fillQty.get(entry);
+                    fillQty.put(entry, currQty+1);
+                }
+
+                //apply fills and create trades
+                ArrayList<Order> toRemove = new ArrayList<>();
+                for ( Order e : oppLevel.orderCollection ) {
+
+                    int tradeQty = fillQty.get(e);
+
+                    if ( tradeQty > 0 ) {
+                        Trade t = new Trade(e.username, incoming.username, e.price, tradeQty);
+                        tradeReciepts.add(t);
+
+                        incoming.volume -= tradeQty;
+                        oppLevel.totalVolume -= tradeQty;
+                        e.volume -= tradeQty;
+
+                        if ( e.volume == 0 ) {
+                            allOrdersOnBook.remove(e.username);
+                            toRemove.add(e);
+                        }
+                    }
+                }
+
+                for ( Order e : toRemove ) {
+                    oppLevel.orderCollection.remove(e);
+                }
             }
-
         }
 
-        // 1. order was not filled (add)
-        // 2. order was partially filled (add)
-        // 3. order was fully filled  (skip)
-        if ( incoming.shares > 0 ) {
-            //is the price in the bidBook?
+        
+        if ( incoming.volume > 0 ) {
             if ( bidBook.get(incoming.price) == null ) {
-                //add it to the bidBook and bidPrices
-                bidPrices.add(incoming.price);
                 PriceLevel p = new PriceLevel();
-                p.OrderList = new LinkedList<>();
                 bidBook.put(incoming.price, p);
+                bidPrices.add(incoming.price);
             }
-
-            //we need to update OrderList and totVolume
             PriceLevel p = bidBook.get(incoming.price);
-            p.totalVolume += incoming.shares;
-            p.OrderList.add(incoming);
+            p.orderCollection.add(incoming);
+            p.totalVolume += incoming.volume;
+            allOrdersOnBook.put(incoming.username, incoming);
         }
-        return tradeReceipts;
+        return tradeReciepts;
     }
 
-    public ArrayList<Trade> matchAskOrder(Order incoming) {
-        ArrayList<Trade> tradeReceipts = new ArrayList<>();
+    private ArrayList<Trade> matchSellOrder(Order incoming) {
+        ArrayList<Trade> tradeReciepts = new ArrayList<>();
 
-        // 1. order crosses
-        // 2. order does not cross
-
-        while ( !bidBook.isEmpty() && (incoming.shares > 0) && (incoming.price <= getBestBid()) ) {
-
-        // 1. Order.shares >= totVolume
-        // 2. Order.shares < totVolume
-
-
-        // Case 1:
-        // create receipts
-        // decrease shares of incoming order
-        // remove price level (prices & book)
-        // try again
-
-        // Case 2:
-        // calculate the pro rata for matchingOrders (1)
-        // give out remainder if any  (2)
-        // apply fill (2)
-        // calculate receipts (2)
-        // decrease totalVolume (2)
-        // remove any orders if needed (3)
-        // decrease inc.qty (goes to 0)
+        while ( !bidBook.isEmpty() && incoming.price <= getBestBid() && incoming.volume > 0 ) {
 
             PriceLevel oppLevel = bidBook.get(getBestBid());
 
-            if ( incoming.shares >= oppLevel.totalVolume ) {
-
-                for ( Order resting : oppLevel.OrderList ) {
-                    Trade t = new Trade(resting.orderId, incoming.orderId, resting.price, resting.shares);
-                    tradeReceipts.add(t);
+            if ( incoming.volume >= oppLevel.totalVolume ) {
+                //create receipts
+                for ( Order o : oppLevel.orderCollection ) {
+                    Trade t = new Trade(o.username, incoming.username, o.price, o.volume);
+                    tradeReciepts.add(t);
                 }
 
-                incoming.shares -= oppLevel.totalVolume;
+                //dec inc shares
+                incoming.volume -= oppLevel.totalVolume;
 
+                //remove price and collection of orders 
                 bidBook.remove(getBestBid());
                 bidPrices.remove();
-
             } else {
 
                 HashMap<Order, Integer> fillQty = new HashMap<>();
+                PriorityQueue<Order> remainderQueue = new PriorityQueue<>(OrderComparators.RemainderAlloc.reversed());
                 int allocated = 0;
 
-                //calculate mathcing qty
-                for ( Order resting : oppLevel.OrderList ) {
-                    int restingAlloc = (incoming.shares * resting.shares)/oppLevel.totalVolume;
-                    allocated += restingAlloc;
-                    fillQty.put(resting, restingAlloc);
+                //calc pro rata
+                for ( Order e : oppLevel.orderCollection ) {
+                    int orderAlloc = (e.volume * incoming.volume)/oppLevel.totalVolume;
+                    fillQty.put(e, orderAlloc);
+                    allocated += orderAlloc;
                 }
 
-                int remainder = incoming.shares - allocated;
-                
-                //give out remainder --> (apply fill, calc receipts, dec totVol)
-                for ( Order resting : oppLevel.OrderList ) {
+                //find orders eligible for remainder if it exists
+                int remainder = incoming.volume - allocated;
+                if ( remainder > 0 ) {
+                    for ( Order e : oppLevel.orderCollection ) {
+                        remainderQueue.add(e);
 
-                    int currQty = fillQty.get(resting);
-
-                    if ( remainder > 0 ) {
-                        remainder--;
-                        currQty += 1;
-                    }
-
-                    if ( currQty > 0 ) {
-                        resting.shares -= currQty;
-                        Trade t  = new Trade(resting.orderId, incoming.orderId, resting.price, currQty);
-                        tradeReceipts.add(t);
-                        oppLevel.totalVolume -= currQty;
-                    }
-
-                }
-
-                //remove any orders with shares = 0
-                Iterator<Order> it = oppLevel.OrderList.iterator();
-                while ( it.hasNext() ) {
-                    Order o = it.next();
-
-                    if ( o.shares == 0 ) {
-                        it.remove();
+                        if ( remainderQueue.size() > remainder ) {
+                            remainderQueue.remove();
+                        }
                     }
                 }
-                incoming.shares = 0;
+
+                //go thru the remainders and update fill qty
+                while ( !remainderQueue.isEmpty() ) {
+                    Order entry = remainderQueue.poll();
+                    
+                    Integer currQty = fillQty.get(entry);
+                    fillQty.put(entry, currQty+1);
+                }
+
+                //apply fills and create trades
+                ArrayList<Order> toRemove = new ArrayList<>();
+                for ( Order e : oppLevel.orderCollection ) {
+
+                    int tradeQty = fillQty.get(e);
+
+                    if ( tradeQty > 0 ) {
+                        Trade t = new Trade(e.username, incoming.username, e.price, tradeQty);
+                        tradeReciepts.add(t);
+
+                        incoming.volume -= tradeQty;
+                        oppLevel.totalVolume -= tradeQty;
+                        e.volume -= tradeQty;
+
+                        if ( e.volume == 0 ) {
+                            allOrdersOnBook.remove(e.username);
+                            toRemove.add(e);
+                        }
+                    }
+                }
+
+                for ( Order e : toRemove ) {
+                    oppLevel.orderCollection.remove(e);
+                }
             }
-            
         }
 
-        // 1. order was not filled (add)
-        // 2. order was partially filled (add)
-        // 3. order was fully filled  (skip)
-        if ( incoming.shares > 0 ) {
-            //is the price in the bidBook?
+        
+        if ( incoming.volume > 0 ) {
             if ( askBook.get(incoming.price) == null ) {
-                //add it to the askBook and askPrices
-                askPrices.add(incoming.price);
                 PriceLevel p = new PriceLevel();
-                p.OrderList = new LinkedList<>();
                 askBook.put(incoming.price, p);
+                askPrices.add(incoming.price);
             }
-
-            //we need to update OrderList and totVolume
             PriceLevel p = askBook.get(incoming.price);
-            p.totalVolume += incoming.shares;
-            p.OrderList.add(incoming);
+            p.orderCollection.add(incoming);
+            p.totalVolume += incoming.volume;
+            allOrdersOnBook.put(incoming.username, incoming);
         }
-        return tradeReceipts;
+        return tradeReciepts;
     }
 
 }
