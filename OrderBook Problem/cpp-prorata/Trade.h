@@ -1,22 +1,19 @@
 #pragma once
 
+#include <string>
+
 /**
- * This trade struct defines what we use to verify that a trade went through.
- * The test suite will use Trade objects to verify we have the correct matching
- * logic and solution.
+ * Trade record used by the test harness.
  *
- * restingOrderId - the ID of the Order that is being traded on
- *
- * aggressiveOrderId - the ID of the Order that is making the trade
- *
- * tradingPrice - the price that we are trading at
- *
- * quantity - how many shares we are trading at this price
+ * seller  - username of the resting (liquidity-providing) side
+ * buyer   - username of the aggressive (taker) side
+ * tradingPrice - price the trade executed at
+ * quantity     - number of units traded
  */
 
 struct Trade {
-    unsigned long restingOrderId;
-    unsigned long aggressiveOrderId;
+    std::string seller;
+    std::string buyer;
     unsigned long tradingPrice;
     unsigned long quantity;
 };

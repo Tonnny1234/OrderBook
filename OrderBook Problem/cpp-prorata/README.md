@@ -8,8 +8,8 @@ remainder allocation**.
 | File | Description |
 |---|---|
 | `Side.h` | `enum class Side { BUY, ASK };` |
-| `Order.h` | Order struct (`orderId`, `price`, `shares`, `side`) |
-| `Trade.h` | Trade struct (`restingOrderId`, `aggressiveOrderId`, `tradingPrice`, `quantity`) |
+| `Order.h` | Order struct (`username`, `price`, `volume`, `side`, `timestamp`) |
+| `Trade.h` | Trade struct (`seller`, `buyer`, `tradingPrice`, `quantity`) |
 | `OrderBook.h` | Class declaration. |
 | `OrderBook.cpp` | **Your implementation goes here.** |
 | `main.cpp` | Test harness — no need to modify. |

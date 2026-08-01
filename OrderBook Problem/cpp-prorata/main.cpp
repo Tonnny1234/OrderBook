@@ -90,13 +90,13 @@ static void checkEqual(const T& actual, const T& expected, const string& ctx) {
 // Construction helpers
 // ---------------------------------------------------------------------
 
-static Order makeOrder(unsigned long id, unsigned long price, unsigned long shares, Side side) {
-    return Order{id, price, shares, side};
+static Order makeOrder(unsigned long id, unsigned long price, unsigned long volume, Side side) {
+    return Order{string("u") + to_string(id), price, volume, side, id};
 }
 
 static Trade makeTrade(unsigned long restingId, unsigned long aggressiveId,
                         unsigned long price, unsigned long qty) {
-    return Trade{restingId, aggressiveId, price, qty};
+    return Trade{string("u") + to_string(restingId), string("u") + to_string(aggressiveId), price, qty};
 }
 
 // ---------------------------------------------------------------------
@@ -106,26 +106,28 @@ static Trade makeTrade(unsigned long restingId, unsigned long aggressiveId,
 // submitOrder() are documented as NOT having a guaranteed order. We still
 // want a one-to-one, fully-specified comparison against the expected
 // collection, so both sides get sorted onto the same key before comparing
-// element-by-element. orderId is unique, so it's a safe sort key for
-// Orders. Within a single submitOrder() call a resting order can only
-// appear once in the returned Trade vector, so restingOrderId is a safe
-// sort key for Trades.
+// element-by-element. order username is unique ("u<ID>"), so it's a safe
+// sort key for Orders. Within a single submitOrder() call a resting order
+// can only appear once in the returned Trade vector, so seller username is
+// a safe sort key for Trades.
 // ---------------------------------------------------------------------
 
 static const Order* findOrder(const vector<Order>& orders, unsigned long id) {
+    string uname = string("u") + to_string(id);
     for (const auto& o : orders) {
-        if (o.orderId == id) return &o;
+        if (o.username == uname) return &o;
     }
     return nullptr;
 }
 
 static void checkOrderFields(const Order* o, unsigned long expId, unsigned long expPrice,
-                              unsigned long expShares, Side expSide, const string& ctx) {
-    check(o != nullptr, ctx + ": order id " + to_string(expId) + " not found");
-    check(o->orderId == expId, ctx + ": orderId mismatch");
-    check(o->price == expPrice, ctx + ": price mismatch for order " + to_string(expId));
-    check(o->shares == expShares, ctx + ": shares mismatch for order " + to_string(expId));
-    check(o->side == expSide, ctx + ": side mismatch for order " + to_string(expId));
+                              unsigned long expVolume, Side expSide, const string& ctx) {
+    string uname = string("u") + to_string(expId);
+    check(o != nullptr, ctx + ": order " + uname + " not found");
+    check(o->username == uname, ctx + ": username mismatch");
+    check(o->price == expPrice, ctx + ": price mismatch for order " + uname);
+    check(o->volume == expVolume, ctx + ": volume mismatch for order " + uname);
+    check(o->side == expSide, ctx + ": side mismatch for order " + uname);
 }
 
 /** Asserts actual and expected contain the same orders, ignoring vector order. */
@@ -133,10 +135,19 @@ static void assertOrdersMatch(const vector<Order>& actual, const vector<Order>& 
     checkEqual(actual.size(), expected.size(), ctx + ": order count mismatch");
     vector<Order> sortedExpected = expected;
     sort(sortedExpected.begin(), sortedExpected.end(),
-         [](const Order& a, const Order& b) { return a.orderId < b.orderId; });
+         [](const Order& a, const Order& b) { return a.username < b.username; });
     for (const auto& e : sortedExpected) {
-        const Order* a = findOrder(actual, e.orderId);
-        checkOrderFields(a, e.orderId, e.price, e.shares, e.side, ctx);
+        // expected orders were constructed with makeOrder(id,...)
+        // so the username is "u" + id
+        string uname = e.username;
+        // find by username
+        const Order* a = nullptr;
+        for (const auto& ao : actual) {
+            if (ao.username == uname) { a = &ao; break; }
+        }
+        // parse id back from username for legacy checks
+        unsigned long id = stoul(uname.substr(1));
+        checkOrderFields(a, id, e.price, e.volume, e.side, ctx);
     }
 }
 
@@ -145,15 +156,15 @@ static void assertTradesMatch(const vector<Trade>& actual, const vector<Trade>& 
     checkEqual(actual.size(), expected.size(), ctx + ": trade count mismatch");
     vector<Trade> sortedActual = actual;
     vector<Trade> sortedExpected = expected;
-    auto byResting = [](const Trade& a, const Trade& b) { return a.restingOrderId < b.restingOrderId; };
-    sort(sortedActual.begin(), sortedActual.end(), byResting);
-    sort(sortedExpected.begin(), sortedExpected.end(), byResting);
+    auto bySeller = [](const Trade& a, const Trade& b) { return a.seller < b.seller; };
+    sort(sortedActual.begin(), sortedActual.end(), bySeller);
+    sort(sortedExpected.begin(), sortedExpected.end(), bySeller);
     for (size_t i = 0; i < sortedExpected.size(); i++) {
         const Trade& e = sortedExpected[i];
         const Trade& a = sortedActual[i];
-        string tctx = ctx + ": trade vs resting order " + to_string(e.restingOrderId);
-        checkEqual(a.restingOrderId, e.restingOrderId, tctx + " (restingOrderId)");
-        checkEqual(a.aggressiveOrderId, e.aggressiveOrderId, tctx + " (aggressiveOrderId)");
+        string tctx = ctx + ": trade vs resting seller " + e.seller;
+        checkEqual(a.seller == e.seller, true, tctx + " (seller)");
+        checkEqual(a.buyer == e.buyer, true, tctx + " (buyer)");
         checkEqual(a.tradingPrice, e.tradingPrice, tctx + " (tradingPrice)");
         checkEqual(a.quantity, e.quantity, tctx + " (quantity)");
     }
