@@ -3,13 +3,16 @@
 Implement the `OrderBook` class: a **pro-rata limit order book with FIFO
 remainder allocation**.
 
+Note: Remainder allocation determined first by (shares desc, timestamp asc). You will give a share to the R orders
+determined by this ordering.
+
 ## Files
 
 | File | Description |
 |---|---|
 | `Side.java` | `enum Side { BUY, ASK }` |
-| `Order.java` | Order struct (`orderId`, `price`, `shares`, `side`) |
-| `Trade.java` | Trade struct (`restingOrderId`, `aggressiveOrderId`, `tradingPrice`, `quantity`) |
+| `Order.java` | Order struct (`username`, `price`, `volume`, `side`, `timestamp`) |
+| `Trade.java` | Trade struct (`seller`, `buyer`, `tradingPrice`, `quantity`) |
 | `OrderBook.java` | **Your implementation goes here.** |
 | `OrderBookTest.java` | Test harness — no need to modify. |
 

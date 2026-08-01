@@ -1,20 +1,19 @@
 /**
  * This defines what an Order on the OrderBook actually is.
- * 
- * orderId - a unique identifier of every Order
- * 
- * price - the maximum price (if it is a buy) it will trade at or the 
- *         minimum price (if it is a sell) it will trade at
- * 
- * side - the side of the book that the Order is on 
+ *
+ * username  - a unique string identifier for the user submitting the order
+ * price     - the limit price for the order
+ * volume    - how many units the order is for
+ * side      - BUY or ASK
+ * timestamp - unique timestamp for every order (used for tie-breaking)
  */
-
 
 public class Order {
 
-    public Integer orderId;
+    public String username;
     public Integer price;
-    public Integer shares;
+    public Integer volume;
     public Side side;
+    public Long timestamp;
 
 }

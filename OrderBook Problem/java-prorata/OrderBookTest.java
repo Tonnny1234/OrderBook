@@ -23,13 +23,16 @@
 // Pro-rata allocation rule (as specified by the assignment):
 //   - Each resting order at the level gets floor(matchQty * theirShares / totalSharesAtLevel).
 //   - This floor step under-allocates by some remainder R = matchQty - sum(floors).
-//   - R is distributed 1 share at a time, in FIFO (submission) order, to the
-//     first R orders at that level. E.g. 6 shares left over 12 orders means
-//     the first 6 orders (by submission order) each get exactly 1 extra
-//     share, and the remaining 6 orders get 0 extra.
+//   - R is distributed 1 share at a time to the first R orders at that level,
+//     where "first" means ranked by (shares descending, then timestamp/
+//     submission-order ascending to break ties on equal size). E.g. 6 shares
+//     left over 12 equally-sized orders means the first 6 by submission
+//     order each get exactly 1 extra share (size is tied, so timestamp
+//     decides) -- but if sizes differ, the largest resting order(s) get the
+//     remainder first regardless of when they were submitted.
 // Tests below construct exact numeric scenarios for this rule so results are
 // unambiguous (no ties in the floor step itself -- only the well-specified
-// FIFO remainder step is exercised).
+// size-then-timestamp remainder step is exercised).
 //
 // Assumptions made about OrderBook semantics beyond the pro-rata rule itself:
 //   1. submitOrder(order) returns the list of Trades produced by that single
@@ -90,17 +93,18 @@ public class OrderBookTest {
     // Construction helpers
     // ---------------------------------------------------------------
 
-    private static Order makeOrder(int id, int price, int shares, Side side) {
+    private static Order makeOrder(int id, int price, int volume, Side side) {
         Order o = new Order();
-        o.orderId = id;
+        o.username = "u" + id;
         o.price = price;
-        o.shares = shares;
+        o.volume = volume;
         o.side = side;
+        o.timestamp = (long) id; // ensure unique timestamp per order in tests
         return o;
     }
 
     private static Trade makeTrade(int restingId, int aggressiveId, int price, int qty) {
-        return new Trade(restingId, aggressiveId, price, qty);
+        return new Trade("u" + restingId, "u" + aggressiveId, price, qty);
     }
 
     // ---------------------------------------------------------------
@@ -117,29 +121,40 @@ public class OrderBookTest {
     // ---------------------------------------------------------------
 
     private static Order findOrder(List<Order> orders, long id) {
+        String uname = "u" + id;
         for (Order o : orders) {
-            if (o.orderId == id) return o;
+            if (o.username != null && o.username.equals(uname)) return o;
         }
         return null;
     }
 
     private static void checkOrderFields(Order o, long expId, long expPrice,
-                                          long expShares, Side expSide, String ctx) {
-        check(o != null, ctx + ": order id " + expId + " not found");
-        check(o.orderId == expId, ctx + ": orderId mismatch");
-        checkEqual(o.price, expPrice, ctx + ": price mismatch for order " + expId);
-        checkEqual(o.shares, expShares, ctx + ": shares mismatch for order " + expId);
-        check(o.side == expSide, ctx + ": side mismatch for order " + expId);
+                                          long expVolume, Side expSide, String ctx) {
+        String uname = "u" + expId;
+        check(o != null, ctx + ": order " + uname + " not found");
+        check(o.username != null && o.username.equals(uname), ctx + ": username mismatch");
+        checkEqual(o.price, expPrice, ctx + ": price mismatch for order " + uname);
+        checkEqual(o.volume, expVolume, ctx + ": volume mismatch for order " + uname);
+        check(o.side == expSide, ctx + ": side mismatch for order " + uname);
     }
 
     /** Asserts actual and expected contain the same orders, ignoring list order. */
     private static void assertOrdersMatch(List<Order> actual, List<Order> expected, String ctx) {
         checkEqual(actual.size(), expected.size(), ctx + ": order count mismatch");
         List<Order> sortedExpected = new ArrayList<>(expected);
-        sortedExpected.sort(Comparator.comparingLong(o -> o.orderId));
+        sortedExpected.sort(Comparator.comparing(o -> o.username));
         for (Order e : sortedExpected) {
-            Order a = findOrder(actual, e.orderId);
-            checkOrderFields(a, e.orderId, e.price, e.shares, e.side, ctx);
+            // expected orders were constructed with makeOrder(id,...)
+            // so the username is "u" + id
+            String uname = e.username;
+            // find by username
+            Order a = null;
+            for (Order ao : actual) {
+                if (ao.username != null && ao.username.equals(uname)) { a = ao; break; }
+            }
+            // parse id back from username for legacy checks
+            long id = Long.parseLong(uname.substring(1));
+            checkOrderFields(a, id, e.price, e.volume, e.side, ctx);
         }
     }
 
@@ -148,15 +163,15 @@ public class OrderBookTest {
         checkEqual(actual.size(), expected.size(), ctx + ": trade count mismatch");
         List<Trade> sortedActual = new ArrayList<>(actual);
         List<Trade> sortedExpected = new ArrayList<>(expected);
-        Comparator<Trade> byResting = Comparator.comparingInt(t -> t.restingOrderId);
-        sortedActual.sort(byResting);
-        sortedExpected.sort(byResting);
+        Comparator<Trade> bySeller = Comparator.comparing(t -> t.seller);
+        sortedActual.sort(bySeller);
+        sortedExpected.sort(bySeller);
         for (int i = 0; i < sortedExpected.size(); i++) {
             Trade e = sortedExpected.get(i);
             Trade a = sortedActual.get(i);
-            String tctx = ctx + ": trade vs resting order " + e.restingOrderId;
-            checkEqual(a.restingOrderId, e.restingOrderId, tctx + " (restingOrderId)");
-            checkEqual(a.aggressiveOrderId, e.aggressiveOrderId, tctx + " (aggressiveOrderId)");
+            String tctx = ctx + ": trade vs resting seller " + e.seller;
+            checkEqual(a.seller.equals(e.seller), true, tctx + " (seller)");
+            checkEqual(a.buyer.equals(e.buyer), true, tctx + " (buyer)");
             checkEqual(a.tradingPrice, e.tradingPrice, tctx + " (tradingPrice)");
             checkEqual(a.quantity, e.quantity, tctx + " (quantity)");
         }
@@ -400,38 +415,84 @@ public class OrderBookTest {
             checkEqual(ob.getTotalVolumeAtPrice(100), 10, "proRata_exactSplitNoRemainder: remaining volume");
         });
 
-        core("proRata_fifoRemainderToFirstOrder", () -> {
-            // Resting (submitted in this order): id1=10, id2=5, id3=5 (total=20).
+        core("proRata_remainderGoesToBiggestShares", () -> {
+            // Resting (submitted in this order): id1=5, id2=15, id3=10 (total=30).
+            // id1 is submitted FIRST but has the SMALLEST size -- this is
+            // deliberately chosen to distinguish "biggest shares first" from a
+            // pure FIFO-by-submission-order remainder rule.
             // Incoming matches 10 shares.
-            //   id1: floor(10*10/20) = 5
-            //   id2: floor(10*5/20)  = 2
-            //   id3: floor(10*5/20)  = 2
-            //   sum = 9, remainder = 1 -> goes to id1 (first by submission order).
+            //   id1: floor(10*5/30)  = 1
+            //   id2: floor(10*15/30) = 5
+            //   id3: floor(10*10/30) = 3
+            //   sum = 9, remainder = 1 -> ranked by (shares desc, timestamp asc):
+            //   id2(15) > id3(10) > id1(5). The remainder share goes to id2,
+            //   the largest resting order, even though id1 was submitted earlier.
             OrderBook ob = new OrderBook();
-            ob.submitOrder(makeOrder(1, 100, 10, Side.ASK));
-            ob.submitOrder(makeOrder(2, 100, 5, Side.ASK));
-            ob.submitOrder(makeOrder(3, 100, 5, Side.ASK));
+            ob.submitOrder(makeOrder(1, 100, 5, Side.ASK));
+            ob.submitOrder(makeOrder(2, 100, 15, Side.ASK));
+            ob.submitOrder(makeOrder(3, 100, 10, Side.ASK));
             List<Trade> trades = ob.submitOrder(makeOrder(4, 100, 10, Side.BUY));
 
             List<Trade> expectedTrades = List.of(
-                    makeTrade(1, 4, 100, 6),
-                    makeTrade(2, 4, 100, 2),
-                    makeTrade(3, 4, 100, 2));
-            assertTradesMatch(trades, expectedTrades, "proRata_fifoRemainderToFirstOrder trades");
+                    makeTrade(1, 4, 100, 1),
+                    makeTrade(2, 4, 100, 6),
+                    makeTrade(3, 4, 100, 3));
+            assertTradesMatch(trades, expectedTrades, "proRata_remainderGoesToBiggestShares trades");
 
             List<Order> expectedOrders = List.of(
                     makeOrder(1, 100, 4, Side.ASK),
-                    makeOrder(2, 100, 3, Side.ASK),
-                    makeOrder(3, 100, 3, Side.ASK));
-            assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "proRata_fifoRemainderToFirstOrder resting");
-            checkEqual(ob.getTotalVolumeAtPrice(100), 10, "proRata_fifoRemainderToFirstOrder: remaining volume");
+                    makeOrder(2, 100, 9, Side.ASK),
+                    makeOrder(3, 100, 7, Side.ASK));
+            assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "proRata_remainderGoesToBiggestShares resting");
+            checkEqual(ob.getTotalVolumeAtPrice(100), 20, "proRata_remainderGoesToBiggestShares: remaining volume");
+        });
+
+        core("proRata_remainderRankedBySizeThenTimestamp", () -> {
+            // Resting (submitted in this order): id1=5, id2=15, id3=15, id4=25 (total=60).
+            // id2 and id3 are tied in size, and id4 -- despite being submitted
+            // LAST -- has the largest size of all. This exercises both parts
+            // of the remainder rule at once: rank by shares descending first,
+            // then break ties by submission timestamp ascending.
+            // Incoming matches 15 shares.
+            //   id1: floor(15*5/60)  = 1
+            //   id2: floor(15*15/60) = 3
+            //   id3: floor(15*15/60) = 3
+            //   id4: floor(15*25/60) = 6
+            //   sum = 13, remainder = 2.
+            //   Ranked: id4(25) > id2(15, submitted before id3) > id3(15) > id1(5).
+            //   The 2 remainder shares go to id4 and then id2.
+            OrderBook ob = new OrderBook();
+            ob.submitOrder(makeOrder(1, 100, 5, Side.ASK));
+            ob.submitOrder(makeOrder(2, 100, 15, Side.ASK));
+            ob.submitOrder(makeOrder(3, 100, 15, Side.ASK));
+            ob.submitOrder(makeOrder(4, 100, 25, Side.ASK));
+            List<Trade> trades = ob.submitOrder(makeOrder(5, 100, 15, Side.BUY));
+
+            List<Trade> expectedTrades = List.of(
+                    makeTrade(1, 5, 100, 1),
+                    makeTrade(2, 5, 100, 4),
+                    makeTrade(3, 5, 100, 3),
+                    makeTrade(4, 5, 100, 7));
+            assertTradesMatch(trades, expectedTrades, "proRata_remainderRankedBySizeThenTimestamp trades");
+
+            List<Order> expectedOrders = List.of(
+                    makeOrder(1, 100, 4, Side.ASK),
+                    makeOrder(2, 100, 11, Side.ASK),
+                    makeOrder(3, 100, 12, Side.ASK),
+                    makeOrder(4, 100, 18, Side.ASK));
+            assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "proRata_remainderRankedBySizeThenTimestamp resting");
+            checkEqual(ob.getTotalVolumeAtPrice(100), 45, "proRata_remainderRankedBySizeThenTimestamp: remaining volume");
         });
 
         core("proRata_remainderSpreadAcrossOrders", () -> {
             // Resting (submission order): id1..id5 = 20 each (total=100).
+            // All five orders are tied in size, so this isolates the
+            // timestamp tie-break half of the rule: among equally-sized
+            // orders, the remainder goes to the earliest submitted first.
             // Incoming matches 53 shares.
             //   each floor(53*20/100) = 10 -> sum = 50, remainder = 3.
-            //   First 3 by submission order (id1, id2, id3) each get +1.
+            //   Ranked by (shares desc, timestamp asc): shares are tied, so
+            //   this reduces to submission order -> id1, id2, id3 each get +1.
             OrderBook ob = new OrderBook();
             ob.submitOrder(makeOrder(1, 100, 20, Side.ASK));
             ob.submitOrder(makeOrder(2, 100, 20, Side.ASK));
@@ -462,9 +523,12 @@ public class OrderBookTest {
             // Exact reproduction of the spec example: "6 shares left, 12 orders,
             // give one each to the first 6."
             // 12 resting orders, each shares=100 (submitted id1..id12), total=1200.
+            // All orders are tied in size, so ranking by (shares desc,
+            // timestamp asc) reduces purely to submission order here.
             // Incoming matches only 6 shares.
             //   each floor(6*100/1200) = 0 -> sum = 0, remainder = 6.
-            //   First 6 by submission order (id1..id6) each get +1; id7..id12 get 0
+            //   Ranked by (shares desc, timestamp asc): all tied on shares, so
+            //   id1..id6 (earliest submitted) each get +1; id7..id12 get 0
             //   and therefore should NOT appear in the returned Trade list.
             OrderBook ob = new OrderBook();
             for (int i = 1; i <= 12; i++) {
@@ -631,7 +695,9 @@ public class OrderBookTest {
 
             // Incoming buy matches 11 shares at price 105 against id3/id4/id5.
             //   id3: floor(11*7/20) = 3, id4: floor(11*7/20) = 3, id5: floor(11*6/20) = 3
-            //   sum = 9, remainder = 2 -> first 2 by submission order (id3, id4) get +1.
+            //   sum = 9, remainder = 2 -> ranked by (shares desc, timestamp asc):
+            //   id3(7) and id4(7) outrank id5(6); between the tied id3/id4,
+            //   id3 was submitted first. So id3 and id4 each get +1.
             // Final fills: id3=4, id4=4, id5=3 (sum=11).
             List<Trade> trades = ob.submitOrder(makeOrder(6, 105, 11, Side.BUY));
             List<Trade> expectedTrades = List.of(

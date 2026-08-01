@@ -1,27 +1,21 @@
 /**
- * This trade class defines what we use to verify that a trade went through.
- * The test suite will use Trade objects to verify we have the correct matching
- * logic and solution.
- * 
- * restingOrderId - the ID of the Order that is being traded on
- * 
- * aggressiveOrderId - the ID of the Order that is making the trade
- * 
- * tradingPrice - the price that we are trading at 
- * 
- * quantity - how many shares we are trading at this price
- * 
+ * Trade record used by the test harness.
+ *
+ * seller  - username of the resting (liquidity-providing) side
+ * buyer   - username of the aggressive (taker) side
+ * tradingPrice - price the trade executed at
+ * quantity     - number of units traded
  */
 
 public class Trade {
-    int restingOrderId;
-    int aggressiveOrderId;
-    int tradingPrice;
-    int quantity;
+    public String seller;
+    public String buyer;
+    public int tradingPrice;
+    public int quantity;
 
-    public Trade(Integer restingOrderId, Integer aggressiveOrderId, Integer tradingPrice, Integer quantity) {
-        this.restingOrderId = restingOrderId;
-        this.aggressiveOrderId = aggressiveOrderId;
+    public Trade(String seller, String buyer, Integer tradingPrice, Integer quantity) {
+        this.seller = seller;
+        this.buyer = buyer;
         this.tradingPrice = tradingPrice;
         this.quantity = quantity;
     }
