@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 
 /**
  * Trade record used by the test harness.
@@ -14,6 +15,10 @@
 struct Trade {
     std::string seller;
     std::string buyer;
-    unsigned long tradingPrice;
-    unsigned long quantity;
+    int tradingPrice;
+    int quantity;
+
+    Trade(std::string seller, std::string buyer, int tradingPrice, int quantity)
+        : seller(std::move(seller)), buyer(std::move(buyer)),
+          tradingPrice(tradingPrice), quantity(quantity) {}
 };

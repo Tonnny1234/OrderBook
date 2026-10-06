@@ -1,6 +1,6 @@
 #include "OrderBook.h"
 
-vector<Order> OrderBook::getAllOrdersAtPrice(unsigned long price) {
+vector<Order> OrderBook::getAllOrdersAtPrice(long price) {
     // TODO: implement logic
     return {};
 }
@@ -10,29 +10,29 @@ vector<Order> OrderBook::getAllOrders() {
     return {};
 }
 
-unsigned long OrderBook::getTotalVolumeAtPrice(unsigned long price) {
+int OrderBook::getTotalVolumeAtPrice(long price) {
     // TODO: implement logic
     return 0;
 }
 
-unsigned long OrderBook::getTotalVolume() {
+int OrderBook::getTotalVolume() {
     // TODO: implement logic
     return 0;
 }
 
-long long OrderBook::getBestBid() {
+int OrderBook::getBestBid() {
     // TODO: implement logic
     return -1;
 }
 
-long long OrderBook::getBestAsk() {
+int OrderBook::getBestAsk() {
     // TODO: implement logic
     return -1;
 }
 
-long long OrderBook::cancelOrder(unsigned long orderId) {
+bool OrderBook::cancelOrder(long orderId) {
     // TODO: implement logic
-    return -1;
+    return false;
 }
 
 vector<Trade> OrderBook::submitOrder(Order order) {

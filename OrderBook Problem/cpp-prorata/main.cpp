@@ -20,24 +20,27 @@
 // Pro-rata allocation rule (as specified by the assignment):
 //   - Each resting order at the level gets floor(matchQty * theirShares / totalSharesAtLevel).
 //   - This floor step under-allocates by some remainder R = matchQty - sum(floors).
-//   - R is distributed 1 share at a time, in FIFO (submission) order, to the
-//     first R orders at that level. E.g. 6 shares left over 12 orders means
-//     the first 6 orders (by submission order) each get exactly 1 extra
-//     share, and the remaining 6 orders get 0 extra.
+//   - R is distributed 1 share at a time to the first R orders at that level,
+//     where "first" means ranked by (shares descending, then timestamp/
+//     submission-order ascending to break ties on equal size). E.g. 6 shares
+//     left over 12 equally-sized orders means the first 6 by submission
+//     order each get exactly 1 extra share (size is tied, so timestamp
+//     decides) -- but if sizes differ, the largest resting order(s) get the
+//     remainder first regardless of when they were submitted.
 // Tests below construct exact numeric scenarios for this rule so results are
 // unambiguous (no ties in the floor step itself -- only the well-specified
-// FIFO remainder step is exercised).
+// size-then-timestamp remainder step is exercised).
 //
 // Assumptions made about OrderBook semantics beyond the pro-rata rule itself:
-//   1. submitOrder(order) returns the list of Trades produced by that single
+//   1. submitOrder(order) returns the vector of Trades produced by that single
 //      call. If the order rests untouched (does not cross the opposite
 //      side), it returns an empty vector.
 //   2. When a marketable order only partially fills against available
 //      resting liquidity, the remainder rests in the book at its own limit
 //      price (standard limit-order-book behavior).
 //   3. getBestBid()/getBestAsk() return -1 when that side of the book is empty.
-//   4. cancelOrder(id) returns the order's price if found & removed, else -1
-//      (including calling it twice on the same id).
+//   4. cancelOrder(id) returns true if an order with that id was found and
+//      removed, false otherwise (including calling it twice on the same id).
 //   5. Side::BUY orders are bids, Side::ASK orders are asks/offers.
 //   6. getTotalVolumeAtPrice(price) / getAllOrdersAtPrice(price) count BOTH
 //      sides resting at that exact price (a price level is just "resting
@@ -77,11 +80,20 @@ static void check(bool condition, const string& msg) {
     }
 }
 
-template <typename T>
-static void checkEqual(const T& actual, const T& expected, const string& ctx) {
-    if (!(actual == expected)) {
+static void checkEqual(long actual, long expected, const string& ctx) {
+    if (actual != expected) {
+        throw TestFailure{ctx + " (expected " + to_string(expected) + ", got " + to_string(actual) + ")"};
+    }
+}
+
+static void checkEqual(int actual, int expected, const string& ctx) {
+    checkEqual((long)actual, (long)expected, ctx);
+}
+
+static void checkEqual(bool actual, bool expected, const string& ctx) {
+    if (actual != expected) {
         ostringstream oss;
-        oss << ctx << " (expected " << expected << ", got " << actual << ")";
+        oss << boolalpha << ctx << " (expected " << expected << ", got " << actual << ")";
         throw TestFailure{oss.str()};
     }
 }
@@ -90,13 +102,18 @@ static void checkEqual(const T& actual, const T& expected, const string& ctx) {
 // Construction helpers
 // ---------------------------------------------------------------------
 
-static Order makeOrder(unsigned long id, unsigned long price, unsigned long volume, Side side) {
-    return Order{string("u") + to_string(id), price, volume, side, id};
+static Order makeOrder(int id, int price, int volume, Side side) {
+    Order o;
+    o.username = "u" + to_string(id);
+    o.price = price;
+    o.volume = volume;
+    o.side = side;
+    o.timestamp = (long)id; // ensure unique timestamp per order in tests
+    return o;
 }
 
-static Trade makeTrade(unsigned long restingId, unsigned long aggressiveId,
-                        unsigned long price, unsigned long qty) {
-    return Trade{string("u") + to_string(restingId), string("u") + to_string(aggressiveId), price, qty};
+static Trade makeTrade(int restingId, int aggressiveId, int price, int qty) {
+    return Trade("u" + to_string(restingId), "u" + to_string(aggressiveId), price, qty);
 }
 
 // ---------------------------------------------------------------------
@@ -112,27 +129,27 @@ static Trade makeTrade(unsigned long restingId, unsigned long aggressiveId,
 // a safe sort key for Trades.
 // ---------------------------------------------------------------------
 
-static const Order* findOrder(const vector<Order>& orders, unsigned long id) {
-    string uname = string("u") + to_string(id);
+static const Order* findOrder(const vector<Order>& orders, long id) {
+    string uname = "u" + to_string(id);
     for (const auto& o : orders) {
         if (o.username == uname) return &o;
     }
     return nullptr;
 }
 
-static void checkOrderFields(const Order* o, unsigned long expId, unsigned long expPrice,
-                              unsigned long expVolume, Side expSide, const string& ctx) {
-    string uname = string("u") + to_string(expId);
+static void checkOrderFields(const Order* o, long expId, long expPrice,
+                             long expVolume, Side expSide, const string& ctx) {
+    string uname = "u" + to_string(expId);
     check(o != nullptr, ctx + ": order " + uname + " not found");
     check(o->username == uname, ctx + ": username mismatch");
-    check(o->price == expPrice, ctx + ": price mismatch for order " + uname);
-    check(o->volume == expVolume, ctx + ": volume mismatch for order " + uname);
+    checkEqual((long)o->price, expPrice, ctx + ": price mismatch for order " + uname);
+    checkEqual((long)o->volume, expVolume, ctx + ": volume mismatch for order " + uname);
     check(o->side == expSide, ctx + ": side mismatch for order " + uname);
 }
 
 /** Asserts actual and expected contain the same orders, ignoring vector order. */
 static void assertOrdersMatch(const vector<Order>& actual, const vector<Order>& expected, const string& ctx) {
-    checkEqual(actual.size(), expected.size(), ctx + ": order count mismatch");
+    checkEqual((long)actual.size(), (long)expected.size(), ctx + ": order count mismatch");
     vector<Order> sortedExpected = expected;
     sort(sortedExpected.begin(), sortedExpected.end(),
          [](const Order& a, const Order& b) { return a.username < b.username; });
@@ -146,14 +163,14 @@ static void assertOrdersMatch(const vector<Order>& actual, const vector<Order>& 
             if (ao.username == uname) { a = &ao; break; }
         }
         // parse id back from username for legacy checks
-        unsigned long id = stoul(uname.substr(1));
+        long id = stol(uname.substr(1));
         checkOrderFields(a, id, e.price, e.volume, e.side, ctx);
     }
 }
 
 /** Asserts actual and expected contain the same trades, ignoring vector order. */
 static void assertTradesMatch(const vector<Trade>& actual, const vector<Trade>& expected, const string& ctx) {
-    checkEqual(actual.size(), expected.size(), ctx + ": trade count mismatch");
+    checkEqual((long)actual.size(), (long)expected.size(), ctx + ": trade count mismatch");
     vector<Trade> sortedActual = actual;
     vector<Trade> sortedExpected = expected;
     auto bySeller = [](const Trade& a, const Trade& b) { return a.seller < b.seller; };
@@ -165,8 +182,8 @@ static void assertTradesMatch(const vector<Trade>& actual, const vector<Trade>& 
         string tctx = ctx + ": trade vs resting seller " + e.seller;
         checkEqual(a.seller == e.seller, true, tctx + " (seller)");
         checkEqual(a.buyer == e.buyer, true, tctx + " (buyer)");
-        checkEqual(a.tradingPrice, e.tradingPrice, tctx + " (tradingPrice)");
-        checkEqual(a.quantity, e.quantity, tctx + " (quantity)");
+        checkEqual((long)a.tradingPrice, (long)e.tradingPrice, tctx + " (tradingPrice)");
+        checkEqual((long)a.quantity, (long)e.quantity, tctx + " (quantity)");
     }
 }
 
@@ -219,17 +236,17 @@ static void registerTests() {
 
     core("emptyBook_bestBid", [] {
         OrderBook ob;
-        checkEqual(ob.getBestBid(), (long long)-1, "empty book best bid");
+        checkEqual(ob.getBestBid(), -1, "empty book best bid");
     });
 
     core("emptyBook_bestAsk", [] {
         OrderBook ob;
-        checkEqual(ob.getBestAsk(), (long long)-1, "empty book best ask");
+        checkEqual(ob.getBestAsk(), -1, "empty book best ask");
     });
 
     core("emptyBook_totalVolume", [] {
         OrderBook ob;
-        checkEqual(ob.getTotalVolume(), (unsigned long)0, "empty book total volume");
+        checkEqual(ob.getTotalVolume(), 0, "empty book total volume");
     });
 
     core("emptyBook_getAllOrders", [] {
@@ -239,7 +256,7 @@ static void registerTests() {
 
     core("emptyBook_volumeAtPrice", [] {
         OrderBook ob;
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)0, "empty book volume at price 100");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 0, "empty book volume at price 100");
     });
 
     core("emptyBook_ordersAtPrice", [] {
@@ -251,32 +268,32 @@ static void registerTests() {
 
     core("singleRestingBuy_noTrades", [] {
         OrderBook ob;
-        auto trades = ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
+        vector<Trade> trades = ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
         check(trades.empty(), "resting buy order should produce no trades");
     });
 
     core("singleRestingBuy_bestBid", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
-        checkEqual(ob.getBestBid(), (long long)100, "best bid after single resting buy");
+        checkEqual(ob.getBestBid(), 100, "best bid after single resting buy");
     });
 
     core("singleRestingBuy_bestAskUntouched", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
-        checkEqual(ob.getBestAsk(), (long long)-1, "best ask should remain empty");
+        checkEqual(ob.getBestAsk(), -1, "best ask should remain empty");
     });
 
     core("singleRestingBuy_totalVolume", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
-        checkEqual(ob.getTotalVolume(), (unsigned long)10, "total volume after single resting order");
+        checkEqual(ob.getTotalVolume(), 10, "total volume after single resting order");
     });
 
     core("singleRestingBuy_volumeAtPrice", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)10, "volume at price after resting order");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 10, "volume at price after resting order");
     });
 
     core("singleRestingBuy_ordersAtPrice", [] {
@@ -298,7 +315,7 @@ static void registerTests() {
     core("nonCrossingAsk_noTrades", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
-        auto trades = ob.submitOrder(makeOrder(2, 105, 20, Side::ASK));
+        vector<Trade> trades = ob.submitOrder(makeOrder(2, 105, 20, Side::ASK));
         check(trades.empty(), "non-crossing resting ask should produce no trades");
     });
 
@@ -306,21 +323,21 @@ static void registerTests() {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
         ob.submitOrder(makeOrder(2, 105, 20, Side::ASK));
-        checkEqual(ob.getBestAsk(), (long long)105, "best ask after resting ask");
+        checkEqual(ob.getBestAsk(), 105, "best ask after resting ask");
     });
 
     core("nonCrossingAsk_bestBidUnaffected", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
         ob.submitOrder(makeOrder(2, 105, 20, Side::ASK));
-        checkEqual(ob.getBestBid(), (long long)100, "best bid unaffected by resting ask");
+        checkEqual(ob.getBestBid(), 100, "best bid unaffected by resting ask");
     });
 
     core("nonCrossingAsk_totalVolume", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
         ob.submitOrder(makeOrder(2, 105, 20, Side::ASK));
-        checkEqual(ob.getTotalVolume(), (unsigned long)30, "total volume with bid+ask resting");
+        checkEqual(ob.getTotalVolume(), 30, "total volume with bid+ask resting");
     });
 
     // ----- Aggregation at a shared price level -----
@@ -329,7 +346,7 @@ static void registerTests() {
         OrderBook ob;
         ob.submitOrder(makeOrder(10, 100, 5, Side::BUY));
         ob.submitOrder(makeOrder(11, 100, 7, Side::BUY));
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)12, "aggregated volume at shared price level");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 12, "aggregated volume at shared price level");
     });
 
     core("sharedLevel_ordersAtPrice", [] {
@@ -349,7 +366,7 @@ static void registerTests() {
         ob.submitOrder(makeOrder(1, 100, 5, Side::BUY));
         ob.submitOrder(makeOrder(2, 105, 5, Side::BUY));
         ob.submitOrder(makeOrder(3, 102, 5, Side::BUY));
-        checkEqual(ob.getBestBid(), (long long)105, "best bid is highest of multiple levels");
+        checkEqual(ob.getBestBid(), 105, "best bid is highest of multiple levels");
     });
 
     core("multiLevel_bestAskIsLowest", [] {
@@ -357,7 +374,7 @@ static void registerTests() {
         ob.submitOrder(makeOrder(1, 110, 5, Side::ASK));
         ob.submitOrder(makeOrder(2, 108, 5, Side::ASK));
         ob.submitOrder(makeOrder(3, 115, 5, Side::ASK));
-        checkEqual(ob.getBestAsk(), (long long)108, "best ask is lowest of multiple levels");
+        checkEqual(ob.getBestAsk(), 108, "best ask is lowest of multiple levels");
     });
 
     core("multiLevel_totalVolume", [] {
@@ -366,7 +383,7 @@ static void registerTests() {
         ob.submitOrder(makeOrder(2, 95, 4, Side::BUY));
         ob.submitOrder(makeOrder(3, 110, 6, Side::ASK));
         ob.submitOrder(makeOrder(4, 115, 2, Side::ASK));
-        checkEqual(ob.getTotalVolume(), (unsigned long)15, "total volume across multiple non-crossing levels");
+        checkEqual(ob.getTotalVolume(), 15, "total volume across multiple non-crossing levels");
     });
 
     // ----- Full match (single resting order, exact size) -----
@@ -374,7 +391,7 @@ static void registerTests() {
     core("fullMatch_producesTrade", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::ASK));
-        auto trades = ob.submitOrder(makeOrder(2, 100, 10, Side::BUY));
+        vector<Trade> trades = ob.submitOrder(makeOrder(2, 100, 10, Side::BUY));
         vector<Trade> expected = {makeTrade(1, 2, 100, 10)};
         assertTradesMatch(trades, expected, "fullMatch_producesTrade");
     });
@@ -383,7 +400,7 @@ static void registerTests() {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::ASK));
         ob.submitOrder(makeOrder(2, 100, 10, Side::BUY));
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)0, "price level empty after full match");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 0, "price level empty after full match");
         check(ob.getAllOrdersAtPrice(100).empty(), "no orders left at price after full match");
     });
 
@@ -391,7 +408,7 @@ static void registerTests() {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::ASK));
         ob.submitOrder(makeOrder(2, 100, 10, Side::BUY));
-        checkEqual(ob.getBestAsk(), (long long)-1, "best ask gone after full match consumes it");
+        checkEqual(ob.getBestAsk(), -1, "best ask gone after full match consumes it");
     });
 
     // ----- Pro-rata matching -----
@@ -402,7 +419,7 @@ static void registerTests() {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::ASK));
         ob.submitOrder(makeOrder(2, 100, 10, Side::ASK));
-        auto trades = ob.submitOrder(makeOrder(3, 100, 10, Side::BUY));
+        vector<Trade> trades = ob.submitOrder(makeOrder(3, 100, 10, Side::BUY));
 
         vector<Trade> expectedTrades = {
             makeTrade(1, 3, 100, 5),
@@ -413,49 +430,94 @@ static void registerTests() {
             makeOrder(1, 100, 5, Side::ASK),
             makeOrder(2, 100, 5, Side::ASK)};
         assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "proRata_exactSplitNoRemainder resting");
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)10, "proRata_exactSplitNoRemainder: remaining volume");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 10, "proRata_exactSplitNoRemainder: remaining volume");
     });
 
-    core("proRata_fifoRemainderToFirstOrder", [] {
-        // Resting (submitted in this order): id1=10, id2=5, id3=5 (total=20).
+    core("proRata_remainderGoesToBiggestShares", [] {
+        // Resting (submitted in this order): id1=5, id2=15, id3=10 (total=30).
+        // id1 is submitted FIRST but has the SMALLEST size -- this is
+        // deliberately chosen to distinguish "biggest shares first" from a
+        // pure FIFO-by-submission-order remainder rule.
         // Incoming matches 10 shares.
-        //   id1: floor(10*10/20) = 5
-        //   id2: floor(10*5/20)  = 2
-        //   id3: floor(10*5/20)  = 2
-        //   sum = 9, remainder = 1 -> goes to id1 (first by submission order).
-        // Final fills: id1=6, id2=2, id3=2.
+        //   id1: floor(10*5/30)  = 1
+        //   id2: floor(10*15/30) = 5
+        //   id3: floor(10*10/30) = 3
+        //   sum = 9, remainder = 1 -> ranked by (shares desc, timestamp asc):
+        //   id2(15) > id3(10) > id1(5). The remainder share goes to id2,
+        //   the largest resting order, even though id1 was submitted earlier.
         OrderBook ob;
-        ob.submitOrder(makeOrder(1, 100, 10, Side::ASK));
-        ob.submitOrder(makeOrder(2, 100, 5, Side::ASK));
-        ob.submitOrder(makeOrder(3, 100, 5, Side::ASK));
-        auto trades = ob.submitOrder(makeOrder(4, 100, 10, Side::BUY));
+        ob.submitOrder(makeOrder(1, 100, 5, Side::ASK));
+        ob.submitOrder(makeOrder(2, 100, 15, Side::ASK));
+        ob.submitOrder(makeOrder(3, 100, 10, Side::ASK));
+        vector<Trade> trades = ob.submitOrder(makeOrder(4, 100, 10, Side::BUY));
 
         vector<Trade> expectedTrades = {
-            makeTrade(1, 4, 100, 6),
-            makeTrade(2, 4, 100, 2),
-            makeTrade(3, 4, 100, 2)};
-        assertTradesMatch(trades, expectedTrades, "proRata_fifoRemainderToFirstOrder trades");
+            makeTrade(1, 4, 100, 1),
+            makeTrade(2, 4, 100, 6),
+            makeTrade(3, 4, 100, 3)};
+        assertTradesMatch(trades, expectedTrades, "proRata_remainderGoesToBiggestShares trades");
 
         vector<Order> expectedOrders = {
             makeOrder(1, 100, 4, Side::ASK),
-            makeOrder(2, 100, 3, Side::ASK),
-            makeOrder(3, 100, 3, Side::ASK)};
-        assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "proRata_fifoRemainderToFirstOrder resting");
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)10, "proRata_fifoRemainderToFirstOrder: remaining volume");
+            makeOrder(2, 100, 9, Side::ASK),
+            makeOrder(3, 100, 7, Side::ASK)};
+        assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "proRata_remainderGoesToBiggestShares resting");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 20, "proRata_remainderGoesToBiggestShares: remaining volume");
+    });
+
+    core("proRata_remainderRankedBySizeThenTimestamp", [] {
+        // Resting (submitted in this order): id1=5, id2=15, id3=15, id4=25 (total=60).
+        // id2 and id3 are tied in size, and id4 -- despite being submitted
+        // LAST -- has the largest size of all. This exercises both parts
+        // of the remainder rule at once: rank by shares descending first,
+        // then break ties by submission timestamp ascending.
+        // Incoming matches 15 shares.
+        //   id1: floor(15*5/60)  = 1
+        //   id2: floor(15*15/60) = 3
+        //   id3: floor(15*15/60) = 3
+        //   id4: floor(15*25/60) = 6
+        //   sum = 13, remainder = 2.
+        //   Ranked: id4(25) > id2(15, submitted before id3) > id3(15) > id1(5).
+        //   The 2 remainder shares go to id4 and then id2.
+        OrderBook ob;
+        ob.submitOrder(makeOrder(1, 100, 5, Side::ASK));
+        ob.submitOrder(makeOrder(2, 100, 15, Side::ASK));
+        ob.submitOrder(makeOrder(3, 100, 15, Side::ASK));
+        ob.submitOrder(makeOrder(4, 100, 25, Side::ASK));
+        vector<Trade> trades = ob.submitOrder(makeOrder(5, 100, 15, Side::BUY));
+
+        vector<Trade> expectedTrades = {
+            makeTrade(1, 5, 100, 1),
+            makeTrade(2, 5, 100, 4),
+            makeTrade(3, 5, 100, 3),
+            makeTrade(4, 5, 100, 7)};
+        assertTradesMatch(trades, expectedTrades, "proRata_remainderRankedBySizeThenTimestamp trades");
+
+        vector<Order> expectedOrders = {
+            makeOrder(1, 100, 4, Side::ASK),
+            makeOrder(2, 100, 11, Side::ASK),
+            makeOrder(3, 100, 12, Side::ASK),
+            makeOrder(4, 100, 18, Side::ASK)};
+        assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "proRata_remainderRankedBySizeThenTimestamp resting");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 45, "proRata_remainderRankedBySizeThenTimestamp: remaining volume");
     });
 
     core("proRata_remainderSpreadAcrossOrders", [] {
         // Resting (submission order): id1..id5 = 20 each (total=100).
+        // All five orders are tied in size, so this isolates the
+        // timestamp tie-break half of the rule: among equally-sized
+        // orders, the remainder goes to the earliest submitted first.
         // Incoming matches 53 shares.
         //   each floor(53*20/100) = 10 -> sum = 50, remainder = 3.
-        //   First 3 by submission order (id1, id2, id3) each get +1.
+        //   Ranked by (shares desc, timestamp asc): shares are tied, so
+        //   this reduces to submission order -> id1, id2, id3 each get +1.
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 20, Side::ASK));
         ob.submitOrder(makeOrder(2, 100, 20, Side::ASK));
         ob.submitOrder(makeOrder(3, 100, 20, Side::ASK));
         ob.submitOrder(makeOrder(4, 100, 20, Side::ASK));
         ob.submitOrder(makeOrder(5, 100, 20, Side::ASK));
-        auto trades = ob.submitOrder(makeOrder(6, 100, 53, Side::BUY));
+        vector<Trade> trades = ob.submitOrder(makeOrder(6, 100, 53, Side::BUY));
 
         vector<Trade> expectedTrades = {
             makeTrade(1, 6, 100, 11),
@@ -472,39 +534,42 @@ static void registerTests() {
             makeOrder(4, 100, 10, Side::ASK),
             makeOrder(5, 100, 10, Side::ASK)};
         assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "proRata_remainderSpreadAcrossOrders resting");
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)47, "proRata_remainderSpreadAcrossOrders: remaining volume");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 47, "proRata_remainderSpreadAcrossOrders: remaining volume");
     });
 
     core("proRata_allFloorsZero", [] {
         // Exact reproduction of the spec example: "6 shares left, 12 orders,
         // give one each to the first 6."
         // 12 resting orders, each shares=100 (submitted id1..id12), total=1200.
+        // All orders are tied in size, so ranking by (shares desc,
+        // timestamp asc) reduces purely to submission order here.
         // Incoming matches only 6 shares.
         //   each floor(6*100/1200) = 0 -> sum = 0, remainder = 6.
-        //   First 6 by submission order (id1..id6) each get +1; id7..id12 get 0
+        //   Ranked by (shares desc, timestamp asc): all tied on shares, so
+        //   id1..id6 (earliest submitted) each get +1; id7..id12 get 0
         //   and therefore should NOT appear in the returned Trade vector.
         OrderBook ob;
-        for (unsigned long i = 1; i <= 12; i++) {
+        for (int i = 1; i <= 12; i++) {
             ob.submitOrder(makeOrder(i, 100, 100, Side::ASK));
         }
-        auto trades = ob.submitOrder(makeOrder(13, 100, 6, Side::BUY));
+        vector<Trade> trades = ob.submitOrder(makeOrder(13, 100, 6, Side::BUY));
 
         vector<Trade> expectedTrades;
-        for (unsigned long i = 1; i <= 6; i++) {
+        for (int i = 1; i <= 6; i++) {
             expectedTrades.push_back(makeTrade(i, 13, 100, 1));
         }
         assertTradesMatch(trades, expectedTrades, "proRata_allFloorsZero trades");
 
-        auto orders = ob.getAllOrdersAtPrice(100);
-        for (unsigned long i = 1; i <= 6; i++) {
+        vector<Order> orders = ob.getAllOrdersAtPrice(100);
+        for (long i = 1; i <= 6; i++) {
             checkOrderFields(findOrder(orders, i), i, 100, 99, Side::ASK,
-                              "proRata_allFloorsZero-id" + to_string(i) + " (should have received +1 fill)");
+                             "proRata_allFloorsZero-id" + to_string(i) + " (should have received +1 fill)");
         }
-        for (unsigned long i = 7; i <= 12; i++) {
+        for (long i = 7; i <= 12; i++) {
             checkOrderFields(findOrder(orders, i), i, 100, 100, Side::ASK,
-                              "proRata_allFloorsZero-id" + to_string(i) + " (should be untouched)");
+                             "proRata_allFloorsZero-id" + to_string(i) + " (should be untouched)");
         }
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)1194, "proRata_allFloorsZero: remaining volume (1200-6)");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 1194, "proRata_allFloorsZero: remaining volume (1200-6)");
     });
 
     // ----- Marketable order larger than resting liquidity at a level -----
@@ -514,14 +579,14 @@ static void registerTests() {
         // wiped out and the leftover buy quantity rests as a new bid.
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 5, Side::ASK));
-        auto trades = ob.submitOrder(makeOrder(2, 100, 12, Side::BUY));
+        vector<Trade> trades = ob.submitOrder(makeOrder(2, 100, 12, Side::BUY));
 
         vector<Trade> expectedTrades = {makeTrade(1, 2, 100, 5)};
         assertTradesMatch(trades, expectedTrades, "marketable_leftoverRestsAtLimitPrice trades");
 
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)7, "leftover buy quantity should rest at limit price");
-        checkEqual(ob.getBestBid(), (long long)100, "leftover buy becomes new best bid");
-        checkEqual(ob.getBestAsk(), (long long)-1, "ask side fully consumed");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 7, "leftover buy quantity should rest at limit price");
+        checkEqual(ob.getBestBid(), 100, "leftover buy becomes new best bid");
+        checkEqual(ob.getBestAsk(), -1, "ask side fully consumed");
 
         vector<Order> expectedOrders = {makeOrder(2, 100, 7, Side::BUY)};
         assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "marketable_leftoverRestsAtLimitPrice resting");
@@ -539,7 +604,7 @@ static void registerTests() {
         ob.submitOrder(makeOrder(1, 100, 5, Side::ASK));
         ob.submitOrder(makeOrder(2, 101, 10, Side::ASK));
         ob.submitOrder(makeOrder(3, 101, 10, Side::ASK));
-        auto trades = ob.submitOrder(makeOrder(4, 101, 13, Side::BUY));
+        vector<Trade> trades = ob.submitOrder(makeOrder(4, 101, 13, Side::BUY));
 
         vector<Trade> expectedTrades = {
             makeTrade(1, 4, 100, 5),
@@ -547,9 +612,9 @@ static void registerTests() {
             makeTrade(3, 4, 101, 4)};
         assertTradesMatch(trades, expectedTrades, "walkBook_twoLevels trades");
 
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)0, "walkBook_twoLevels: level 100 fully consumed");
-        checkEqual(ob.getTotalVolumeAtPrice(101), (unsigned long)12, "walkBook_twoLevels: level 101 partially consumed");
-        checkEqual(ob.getBestAsk(), (long long)101, "walkBook_twoLevels: best ask now at remaining level");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 0, "walkBook_twoLevels: level 100 fully consumed");
+        checkEqual(ob.getTotalVolumeAtPrice(101), 12, "walkBook_twoLevels: level 101 partially consumed");
+        checkEqual(ob.getBestAsk(), 101, "walkBook_twoLevels: best ask now at remaining level");
 
         vector<Order> expectedOrders = {
             makeOrder(2, 101, 6, Side::ASK),
@@ -562,7 +627,7 @@ static void registerTests() {
     core("untouchedPrice_volumeIsZero", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
-        checkEqual(ob.getTotalVolumeAtPrice(999), (unsigned long)0, "volume at unused price should be 0");
+        checkEqual(ob.getTotalVolumeAtPrice(999), 0, "volume at unused price should be 0");
     });
 
     core("untouchedPrice_ordersEmpty", [] {
@@ -575,15 +640,15 @@ static void registerTests() {
     // Cancel-order tests (only run when the cancel feature is enabled)
     // ================================================================
 
-    cancelTest("cancel_onEmptyBookReturnsNegOne", [] {
+    cancelTest("cancel_onEmptyBookReturnsFalse", [] {
         OrderBook ob;
-        checkEqual(ob.cancelOrder(999), (long long)-1, "cancel on empty book should return -1");
+        checkEqual(ob.cancelOrder(999), false, "cancel on empty book should return false");
     });
 
-    cancelTest("cancel_existingOrderReturnsItsPrice", [] {
+    cancelTest("cancel_existingOrderReturnsTrue", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
-        checkEqual(ob.cancelOrder(1), (long long)100, "cancel existing order returns its price");
+        checkEqual(ob.cancelOrder(1), true, "cancel of existing order should return true");
     });
 
     cancelTest("cancel_removesOrderFromBook", [] {
@@ -591,23 +656,23 @@ static void registerTests() {
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
         ob.submitOrder(makeOrder(2, 105, 20, Side::ASK));
         ob.cancelOrder(1);
-        checkEqual(ob.getTotalVolume(), (unsigned long)20, "total volume after cancel");
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)0, "volume at cancelled price");
-        checkEqual(ob.getBestBid(), (long long)-1, "best bid gone after cancel");
+        checkEqual(ob.getTotalVolume(), 20, "total volume after cancel");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 0, "volume at cancelled price");
+        checkEqual(ob.getBestBid(), -1, "best bid gone after cancel");
         check(ob.getAllOrdersAtPrice(100).empty(), "cancelled price level should have no orders");
     });
 
-    cancelTest("cancel_twiceReturnsNegOneSecondTime", [] {
+    cancelTest("cancel_twiceReturnsFalseSecondTime", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
         ob.cancelOrder(1);
-        checkEqual(ob.cancelOrder(1), (long long)-1, "cancelling an already-cancelled order returns -1");
+        checkEqual(ob.cancelOrder(1), false, "cancelling an already-cancelled order returns false");
     });
 
-    cancelTest("cancel_neverUsedIdReturnsNegOne", [] {
+    cancelTest("cancel_neverUsedIdReturnsFalse", [] {
         OrderBook ob;
         ob.submitOrder(makeOrder(1, 100, 10, Side::BUY));
-        checkEqual(ob.cancelOrder(123456), (long long)-1, "cancel of never-used id returns -1");
+        checkEqual(ob.cancelOrder(123456), false, "cancel of never-used id returns false");
     });
 
     cancelTest("cancel_afterProRataPartialFill", [] {
@@ -620,11 +685,11 @@ static void registerTests() {
         ob.submitOrder(makeOrder(2, 100, 10, Side::ASK));
         ob.submitOrder(makeOrder(3, 100, 10, Side::BUY));
 
-        checkEqual(ob.cancelOrder(1), (long long)100, "cancel of partially-filled resting order returns its price");
-        checkEqual(ob.getTotalVolumeAtPrice(100), (unsigned long)5, "only id2's remaining 5 shares left");
+        checkEqual(ob.cancelOrder(1), true, "cancel of partially-filled resting order returns true");
+        checkEqual(ob.getTotalVolumeAtPrice(100), 5, "only id2's remaining 5 shares left");
 
         vector<Order> expectedOrders = {makeOrder(2, 100, 5, Side::ASK)};
-        assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "cancel_afterProRataPartialFill");
+        assertOrdersMatch(ob.getAllOrdersAtPrice(100), expectedOrders, "cancel_afterProRataPartialFill resting");
     });
 
     cancelTest("endToEnd_restsMatchesCancelsAndConsistency", [] {
@@ -639,38 +704,40 @@ static void registerTests() {
         ob.submitOrder(makeOrder(4, 105, 7, Side::ASK));
         ob.submitOrder(makeOrder(5, 105, 6, Side::ASK));
 
-        checkEqual(ob.getBestBid(), (long long)95, "e2e: best bid before crossing");
-        checkEqual(ob.getBestAsk(), (long long)105, "e2e: best ask before crossing");
+        checkEqual(ob.getBestBid(), 95, "e2e: best bid before crossing");
+        checkEqual(ob.getBestAsk(), 105, "e2e: best ask before crossing");
 
         // Cancel one resting bid before the crossing match.
-        checkEqual(ob.cancelOrder(2), (long long)90, "e2e: cancel resting bid returns price");
-        checkEqual(ob.getTotalVolumeAtPrice(90), (unsigned long)0, "e2e: cancelled level empty");
+        checkEqual(ob.cancelOrder(2), true, "e2e: cancel resting bid returns true");
+        checkEqual(ob.getTotalVolumeAtPrice(90), 0, "e2e: cancelled level empty");
 
         // Incoming buy matches 11 shares at price 105 against id3/id4/id5.
         //   id3: floor(11*7/20) = 3, id4: floor(11*7/20) = 3, id5: floor(11*6/20) = 3
-        //   sum = 9, remainder = 2 -> first 2 by submission order (id3, id4) get +1.
+        //   sum = 9, remainder = 2 -> ranked by (shares desc, timestamp asc):
+        //   id3(7) and id4(7) outrank id5(6); between the tied id3/id4,
+        //   id3 was submitted first. So id3 and id4 each get +1.
         // Final fills: id3=4, id4=4, id5=3 (sum=11).
-        auto trades = ob.submitOrder(makeOrder(6, 105, 11, Side::BUY));
+        vector<Trade> trades = ob.submitOrder(makeOrder(6, 105, 11, Side::BUY));
         vector<Trade> expectedTrades = {
             makeTrade(3, 6, 105, 4),
             makeTrade(4, 6, 105, 4),
             makeTrade(5, 6, 105, 3)};
         assertTradesMatch(trades, expectedTrades, "e2e: crossing trades");
 
-        checkEqual(ob.getTotalVolumeAtPrice(105), (unsigned long)9, "e2e: level 105 remaining volume after pro-rata match");
+        checkEqual(ob.getTotalVolumeAtPrice(105), 9, "e2e: level 105 remaining volume after pro-rata match");
         vector<Order> expectedResting = {
             makeOrder(3, 105, 3, Side::ASK),
             makeOrder(4, 105, 3, Side::ASK),
             makeOrder(5, 105, 3, Side::ASK)};
         assertOrdersMatch(ob.getAllOrdersAtPrice(105), expectedResting, "e2e: resting remainders");
-        checkEqual(ob.getBestAsk(), (long long)105, "e2e: best ask still 105 (level not fully consumed)");
+        checkEqual(ob.getBestAsk(), 105, "e2e: best ask still 105 (level not fully consumed)");
 
         // Original untouched bid should still be there.
-        checkEqual(ob.getTotalVolumeAtPrice(95), (unsigned long)10, "e2e: untouched bid level unaffected");
-        checkEqual(ob.getBestBid(), (long long)95, "e2e: best bid still 95");
+        checkEqual(ob.getTotalVolumeAtPrice(95), 10, "e2e: untouched bid level unaffected");
+        checkEqual(ob.getBestBid(), 95, "e2e: best bid still 95");
 
         // Total volume sanity check: 10 (bid@95) + 9 (remaining ask@105) = 19
-        checkEqual(ob.getTotalVolume(), (unsigned long)19, "e2e: final total volume");
+        checkEqual(ob.getTotalVolume(), 19, "e2e: final total volume");
     });
 }
 

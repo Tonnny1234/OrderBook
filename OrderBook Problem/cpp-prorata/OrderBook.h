@@ -1,62 +1,46 @@
+#pragma once
+
 #include "Order.h"
 #include "Trade.h"
 #include <vector>
 
-
 using namespace std;
+
+// Template OrderBook: implementation removed for the exercise.
+// Students should implement the pro-rata limit order book behavior here.
 
 class OrderBook {
 private:
-    /*
-    All variables go here 
-    */
+    // TODO: add member variables here
 
 public:
     /*
     These are the list of functions that you need to support and what the test
-    suite will test you on.
-
-    This is a prorata orderbook. The remainder
-    is distributed FIFO
+    suite will test you on. The bodies (in OrderBook.cpp) are intentionally
+    left as stubs so students can implement their own solution.
     */
 
-    /*
-    These functions return all of the orders in the whole book or at a price
-    level. The order in which the Orders are in the vector do not matter,
-    so long as they collection of Orders are the same.
+    // Return all orders resting at a given price (both sides). Empty vector if none.
+    vector<Order> getAllOrdersAtPrice(long price);
 
-    If there are no orders at a price, return an empty vector
-    */
-    vector<Order> getAllOrdersAtPrice(unsigned long price);
+    // Return every resting order in the book (no particular order required).
     vector<Order> getAllOrders();
 
+    // Total resting volume at a price (both sides). 0 if none.
+    int getTotalVolumeAtPrice(long price);
 
-    /*
-    These functions return the total volume at a price or in the whole book.
+    // Total resting volume in the whole book.
+    int getTotalVolume();
 
-    If there are no orders at a price, return 0
-    */
-    unsigned long getTotalVolumeAtPrice(unsigned long price);
-    unsigned long getTotalVolume();
+    // Highest resting BUY price, or -1 if none.
+    int getBestBid();
 
+    // Lowest resting ASK price, or -1 if none.
+    int getBestAsk();
 
-    /*
-    These functions return the best bid and best ask of the OrderBook.
-    If there is no best bid or best ask, return  -1
-    */
-    long long getBestBid();
-    long long getBestAsk();
+    // Cancel an order by numeric id. Return true if found and removed, false otherwise.
+    bool cancelOrder(long orderId);
 
-    /* 
-    This will cancel an order on the OrderBook. If the orderId does not exist,
-    return -1, otherwise return the price associated with the order
-    */
-    long long cancelOrder(unsigned long orderId);
-    
-    
-    /*
-    This will submit an order to the orderbook. Return a vector of Trades
-    produced by this order. If no trading happens, return an empty vector.
-    */
+    // Submit an order and return the vector of Trades produced by this call.
     vector<Trade> submitOrder(Order order);
 };

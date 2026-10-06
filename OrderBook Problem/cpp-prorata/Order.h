@@ -15,8 +15,8 @@
 
 struct Order {
     std::string username;
-    unsigned long price;
-    unsigned long volume;
+    int price;
+    int volume;
     Side side;
-    unsigned long timestamp;
+    long timestamp;
 };
