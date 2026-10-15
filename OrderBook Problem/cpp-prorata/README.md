@@ -8,9 +8,10 @@ determined by this ordering.
 
 ## Files
 
+
 | File | Description |
 |---|---|
-| `Side.h` | `enum class Side { BUY, ASK };` |
+| `Sideee.h` | `enum class Side { BUY, ASK };` |
 | `Order.h` | Order struct (`username`, `price`, `volume`, `side`, `timestamp`) |
 | `Trade.h` | Trade struct (`seller`, `buyer`, `tradingPrice`, `quantity`) |
 | `OrderBook.h` | Class declaration. |
