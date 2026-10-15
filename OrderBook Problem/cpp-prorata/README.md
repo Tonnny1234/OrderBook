@@ -11,7 +11,7 @@ determined by this ordering.
 
 | File | Description |
 |---|---|
-| `Sideee.h` | `enum class Side { BUY, ASK };` |
+| `Side.h` | `enum class Side { BUY, ASK };` |
 | `Order.h` | Order struct (`username`, `price`, `volume`, `side`, `timestamp`) |
 | `Trade.h` | Trade struct (`seller`, `buyer`, `tradingPrice`, `quantity`) |
 | `OrderBook.h` | Class declaration. |
