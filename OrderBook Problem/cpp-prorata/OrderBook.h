@@ -3,7 +3,7 @@
 #include "Order.h"
 #include "Trade.h"
 #include <vector>
-
+#include <map>
 using namespace std;
 
 // Template OrderBook: implementation removed for the exercise.
@@ -12,7 +12,10 @@ using namespace std;
 class OrderBook {
 private:
     // TODO: add member variables here
-
+    long tVolume = 0; 
+    map<long, int> priceVolume; 
+    map<long, vector<Order>> buyOrders; // Map of price to list of buy orders
+    map<long, vector<Order>> sellOrders; // Map of price to list of sell orders
 public:
     /*
     These are the list of functions that you need to support and what the test
