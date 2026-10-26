@@ -1,33 +1,67 @@
 #include "OrderBook.h"
 
+//O(N)
 vector<Order> OrderBook::getAllOrdersAtPrice(long price) {
-    // TODO: implement logic
-    return {};
+    vector<Order> vs = {};
+    if(buyOrders.find(price) != buyOrders.end()){
+        for(auto z : buyOrders[price]){
+            vs.push_back(z); 
+        }
+    }
+    if(sellOrders.find(price) != sellOrders.end()){
+        for(auto z : sellOrders[price]){
+            vs.push_back(z); 
+        }
+    }
+    return vs; 
 }
 
+//O(N)
 vector<Order> OrderBook::getAllOrders() {
-    // TODO: implement logic
-    return {};
+    vector<Order> vs;
+    for(auto z : buyOrders){
+        for(auto zz : z.second){
+            vs.push_back(zz); 
+        }
+    }
+    for(auto z : sellOrders){
+        for(auto zz : z.second){
+            vs.push_back(zz); 
+        }
+    }
+    return vs; 
 }
 
+int** clone(int **a){
+   int **b = new int*[2];  
+}
+//O(logN) 
 int OrderBook::getTotalVolumeAtPrice(long price) {
-    // TODO: implement logic
+    if(priceVolume.find(price) != priceVolume.end()){
+        return priceVolume[price]; 
+    }
     return 0;
 }
 
+//O(1)
 int OrderBook::getTotalVolume() {
-    // TODO: implement logic
-    return 0;
+    return tVolume; 
 }
 
+//O(1)
 int OrderBook::getBestBid() {
-    // TODO: implement logic
-    return -1;
+    if(buyOrders.empty()){
+        return -1; 
+    }
+    return buyOrders.rbegin()->first; 
 }
 
+//O(1)
 int OrderBook::getBestAsk() {
-    // TODO: implement logic
-    return -1;
+    if(sellOrders.empty()){
+        return -1; 
+    }
+    return sellOrders.begin()->first; 
 }
 
 bool OrderBook::cancelOrder(long orderId) {
