@@ -32,9 +32,6 @@ vector<Order> OrderBook::getAllOrders() {
     return vs; 
 }
 
-int** clone(int **a){
-   int **b = new int*[2];  
-}
 //O(logN) 
 int OrderBook::getTotalVolumeAtPrice(long price) {
     if(priceVolume.find(price) != priceVolume.end()){
