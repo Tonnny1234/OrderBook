@@ -16,6 +16,13 @@ private:
     map<long, int> priceVolume; 
     map<long, vector<Order>> buyOrders; // Map of price to list of buy orders
     map<long, vector<Order>> sellOrders; // Map of price to list of sell orders
+    struct Loc{
+        long price; //price map
+        int index; //index in the vector of orders at that price
+        Side side; //side
+    };
+    map<long, Loc> idMap; 
+
 public:
     /*
     These are the list of functions that you need to support and what the test

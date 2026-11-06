@@ -61,12 +61,35 @@ int OrderBook::getBestAsk() {
     return sellOrders.begin()->first; 
 }
 
+//timestamps is equivalent to ID
+//update the map, totalvolume, and volume at price 
+
 bool OrderBook::cancelOrder(long orderId) {
-    // TODO: implement logic
-    return false;
+    if(idMap.find(orderId) == idMap.end())return false;
+    Loc lc = idMap[orderId]; 
+    auto &book = lc.side == Side::BUY ? buyOrders : sellOrders; 
+    auto &vec = book[lc.price]; 
+    long pr = vec[lc.index].volume; 
+    priceVolume[lc.price] -= pr; 
+    if(priceVolume[lc.price] == 0){
+        priceVolume.erase(lc.price); 
+    }
+    tVolume -= pr; 
+    idMap.erase(orderId); 
+    //swap and pop 
+    if(lc.index != vec.size() - 1){
+        swap(vec.back(), vec[lc.index]); 
+        idMap[vec[lc.index].timestamp].index = lc.index; 
+
+    }
+    vec.pop_back();
+    if(vec.empty()){
+        book.erase(lc.price); 
+    }
+    return true;
 }
 
 vector<Trade> OrderBook::submitOrder(Order order) {
-    // TODO: implement logic
+    
     return {};
 }
