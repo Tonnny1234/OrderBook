@@ -4,6 +4,8 @@
 #include "Trade.h"
 #include <vector>
 #include <map>
+#include<bits/stdc++.h>
+
 using namespace std;
 
 // Template OrderBook: implementation removed for the exercise.
